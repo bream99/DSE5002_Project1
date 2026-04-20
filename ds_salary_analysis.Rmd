@@ -1,0 +1,299 @@
+---
+title: "Data Science Salary Analysis"
+author: "Malcolm Brea"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(knitr)
+library(tidyverse)
+```
+
+---
+
+## A.) Restatement of the Question
+
+**Original Question (paraphrased):**
+Our CEO wants to hire a senior data scientist (potentially the first of a future team) and needs to know what salary range to offer in order to attract and retain top talent in a highly competitive, rapidly escalating market. The role may be offshore or U.S.-based, and the pay must reflect both current market conditions and the candidate's future leadership potential.
+
+**Alternative framings of the question:**
+
+1. What is the market rate for an experienced, team-leading data scientist in the United States vs. offshore?
+2. If we want to be in the top quartile of employers competing for senior DS talent, what should our compensation floor be?
+3. How does geography (U.S. vs. international) affect data scientist salaries at the mid-to-senior level, and what premium must we pay for domestic talent?
+4. What is the minimum salary needed to recruit someone capable of growing into a data science manager within two to three years?
+
+**What could be added to or removed from the question:**
+
+- Add: Benefits, equity, remote work flexibility, and total compensation context. Salary alone does not tell the full story.
+- Add: Industry-specific norms (tech vs. finance vs. healthcare) could shift the benchmark significantly.
+- Remove: If budget is fixed, reframe from "what should we pay?" to "what seniority level can we afford?"
+- Add: A timeline element. Salaries are rising, the range today may be obsolete in 12 months.
+
+---
+
+## B.) Data Loading and Preparation
+
+### B.1 — Load the Data
+
+```{r load_data}
+df <- read.csv("project_1_data.csv", stringsAsFactors = FALSE)
+
+# Drop the unnamed index column
+if ("X" %in% colnames(df)) df <- df[, colnames(df) != "X"]
+
+cat("Dimensions:", nrow(df), "rows x", ncol(df), "columns\n")
+head(df, 3)
+```
+
+### B.2 — Set Variable Types as Factors
+
+```{r factor_conversion}
+df$work_year <- as.factor(df$work_year)
+
+df$experience_level <- factor(df$experience_level,
+                              levels = c("EN", "MI", "SE", "EX"),
+                              labels = c("Entry", "Mid", "Senior", "Executive"))
+
+df$employment_type <- factor(df$employment_type,
+                             levels = c("FT", "PT", "CT", "FL"),
+                             labels = c("Full-Time", "Part-Time", "Contract", "Freelance"))
+
+df$job_title          <- as.factor(df$job_title)
+df$salary_currency    <- as.factor(df$salary_currency)
+df$employee_residence <- as.factor(df$employee_residence)
+
+df$remote_ratio <- factor(df$remote_ratio,
+                          levels = c(0, 50, 100),
+                          labels = c("On-site", "Hybrid", "Remote"))
+
+df$company_location <- as.factor(df$company_location)
+
+df$company_size <- factor(df$company_size,
+                          levels = c("S", "M", "L"),
+                          labels = c("Small", "Medium", "Large"))
+
+str(df)
+```
+
+### B.3 — Basic Exploratory Data Analysis
+
+#### Summary Statistics
+
+```{r eda_summary}
+summary(df)
+```
+
+**Commentary on each variable:**
+
+- **work_year**: The dataset spans 2020–2022. Records roughly triple from 2020 to 2022, reflecting rapid growth in the data science labor market and the proliferation of job postings post-pandemic.
+- **experience_level**: Senior roles dominate (n=280, ~46%), consistent with market demand for proven practitioners over entry-level hires. Executive roles are rare (n=26), typical for an emerging field.
+- **employment_type**: Full-time positions make up 97% of records — the vast majority of DS hiring is for permanent roles, not contract or freelance.
+- **job_title**: 50+ unique titles in the dataset. "Data Scientist" and "Data Engineer" are most common, but salary varies dramatically by title and seniority.
+- **salary / salary_in_usd**: The raw salary column reflects local currency. `salary_in_usd` normalizes everything to USD — this is the appropriate column for all cross-country comparisons.
+- **salary_currency**: 17 currencies present; USD dominates. Converting to `salary_in_usd` is essential.
+- **employee_residence**: Closely mirrors `company_location` — most employees work in the same country as the company.
+- **remote_ratio**: Remote-only (100%) is the plurality mode (~64%), a post-pandemic norm in data science.
+- **company_location**: U.S. companies account for ~58% of the dataset (n=355), making it the dominant market.
+- **company_size**: Large companies (L) are the biggest employer segment and typically pay the most.
+
+#### Additional Tabular Summary — Salary by Experience Level
+
+```{r eda_table}
+salary_by_exp <- df %>%
+  group_by(experience_level) %>%
+  summarise(
+    Count      = n(),
+    Min_USD    = dollar(min(salary_in_usd)),
+    Q1_USD     = dollar(quantile(salary_in_usd, 0.25)),
+    Median_USD = dollar(median(salary_in_usd)),
+    Mean_USD   = dollar(mean(salary_in_usd)),
+    Q3_USD     = dollar(quantile(salary_in_usd, 0.75)),
+    Max_USD    = dollar(max(salary_in_usd))
+  )
+kable(salary_by_exp, caption = "Salary Distribution by Experience Level (USD) — All Roles")
+```
+
+---
+
+#### EDA Plots — One Per Variable
+
+```{r plot_work_year, fig.width=7, fig.height=4}
+ggplot(df, aes(x = work_year, fill = work_year)) +
+  geom_bar(show.legend = FALSE) +
+  labs(title = "Number of Records by Work Year",
+       subtitle = "Dataset grows year-over-year as the field expands",
+       x = "Year", y = "Count") +
+  scale_fill_brewer(palette = "Blues") + theme_minimal()
+```
+
+```{r plot_experience, fig.width=7, fig.height=4}
+ggplot(df, aes(x = experience_level, y = salary_in_usd, fill = experience_level)) +
+  geom_boxplot(show.legend = FALSE, outlier.alpha = 0.4) +
+  scale_y_continuous(labels = dollar_format(scale = 1e-3, suffix = "K")) +
+  labs(title = "Salary by Experience Level",
+       subtitle = "Clear step-up at each level; Executive variance is large due to small n",
+       x = "Experience", y = "Salary (USD)") +
+  scale_fill_brewer(palette = "Greens") + theme_minimal()
+```
+
+```{r plot_employment, fig.width=7, fig.height=4}
+ggplot(df, aes(x = employment_type, fill = employment_type)) +
+  geom_bar(show.legend = FALSE) +
+  labs(title = "Employment Type Distribution",
+       subtitle = "Full-time roles overwhelmingly dominate (97%)",
+       x = NULL, y = "Count") +
+  scale_fill_brewer(palette = "Oranges") + theme_minimal()
+```
+
+```{r plot_job_title, fig.width=9, fig.height=5}
+df %>%
+  group_by(job_title) %>%
+  summarise(med_sal = median(salary_in_usd), n = n()) %>%
+  filter(n >= 5) %>%
+  slice_max(order_by = med_sal, n = 12) %>%
+  ggplot(aes(x = reorder(job_title, med_sal), y = med_sal, fill = med_sal)) +
+  geom_col(show.legend = FALSE) + coord_flip() +
+  scale_y_continuous(labels = dollar_format(scale = 1e-3, suffix = "K")) +
+  scale_fill_gradient(low = "#A8D8EA", high = "#065A82") +
+  labs(title = "Median Salary by Job Title (titles with n ≥ 5)",
+       x = NULL, y = "Median Salary (USD)") + theme_minimal()
+```
+
+```{r plot_salary_dist, fig.width=7, fig.height=4}
+ggplot(df, aes(x = salary_in_usd)) +
+  geom_histogram(fill = "#065A82", bins = 40, alpha = 0.8) +
+  scale_x_continuous(labels = dollar_format(scale = 1e-3, suffix = "K")) +
+  labs(title = "Overall Salary Distribution (USD)",
+       subtitle = "Right-skewed: bulk between $50K–$200K, with high-end outliers",
+       x = "Salary (USD)", y = "Count") +
+  theme_minimal()
+```
+
+```{r plot_remote, fig.width=7, fig.height=4}
+ggplot(df, aes(x = remote_ratio, y = salary_in_usd, fill = remote_ratio)) +
+  geom_boxplot(show.legend = FALSE, outlier.alpha = 0.4) +
+  scale_y_continuous(labels = dollar_format(scale = 1e-3, suffix = "K")) +
+  labs(title = "Salary by Remote Work Status",
+       subtitle = "Remote roles skew slightly higher — driven by U.S. company dominance",
+       x = NULL, y = "Salary (USD)") +
+  scale_fill_brewer(palette = "Purples") + theme_minimal()
+```
+
+```{r plot_location, fig.width=7, fig.height=5}
+df %>%
+  group_by(company_location) %>%
+  summarise(med = median(salary_in_usd), n = n()) %>%
+  filter(n >= 10) %>%
+  ggplot(aes(x = reorder(company_location, med), y = med, fill = med)) +
+  geom_col(show.legend = FALSE) + coord_flip() +
+  scale_y_continuous(labels = dollar_format(scale = 1e-3, suffix = "K")) +
+  scale_fill_gradient(low = "#B2DFDB", high = "#00695C") +
+  labs(title = "Median Salary by Company Location (n ≥ 10)",
+       x = "Country Code", y = "Median Salary (USD)") + theme_minimal()
+```
+
+```{r plot_company_size, fig.width=7, fig.height=4}
+ggplot(df, aes(x = company_size, y = salary_in_usd, fill = company_size)) +
+  geom_violin(show.legend = FALSE, alpha = 0.7) +
+  geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA) +
+  scale_y_continuous(labels = dollar_format(scale = 1e-3, suffix = "K")) +
+  labs(title = "Salary Distribution by Company Size",
+       subtitle = "Large companies pay more and have less variance",
+       x = NULL, y = "Salary (USD)") +
+  scale_fill_brewer(palette = "Set2") + theme_minimal()
+```
+
+---
+
+## C.) Tables and Graphs Answering the CEO's Question
+
+### C.1 — Table 1: US vs. Offshore Salary by Experience Level (Full-Time)
+
+```{r ceo_table1}
+us_vs_offshore <- df %>%
+  filter(employment_type == "Full-Time") %>%
+  mutate(region = ifelse(company_location == "US", "United States", "Offshore")) %>%
+  group_by(region, experience_level) %>%
+  summarise(
+    n          = n(),
+    Median_USD = dollar(median(salary_in_usd)),
+    Mean_USD   = dollar(mean(salary_in_usd)),
+    P25_USD    = dollar(quantile(salary_in_usd, 0.25)),
+    P75_USD    = dollar(quantile(salary_in_usd, 0.75)),
+    .groups    = "drop"
+  )
+kable(us_vs_offshore,
+      caption = "Full-Time Salary Benchmarks: U.S. vs. Offshore by Experience Level (USD)")
+```
+
+### C.2 — Table 2: Senior & Executive US Salary Benchmarks by Title
+
+```{r ceo_table2}
+us_senior <- df %>%
+  filter(company_location == "US",
+         employment_type  == "Full-Time",
+         experience_level %in% c("Senior", "Executive")) %>%
+  group_by(job_title) %>%
+  summarise(
+    n          = n(),
+    Min_USD    = dollar(min(salary_in_usd)),
+    Median_USD = dollar(median(salary_in_usd)),
+    P75_USD    = dollar(quantile(salary_in_usd, 0.75)),
+    Max_USD    = dollar(max(salary_in_usd)),
+    .groups    = "drop"
+  ) %>%
+  filter(n >= 3) %>%
+  arrange(desc(parse_number(Median_USD)))
+kable(us_senior,
+      caption = "Senior/Executive Data Science Salaries — U.S. Full-Time Roles (n ≥ 3)")
+```
+
+### C.3 — Graph 1: Salary Trend Over Time (US vs. Offshore, Full-Time)
+
+```{r ceo_graph1, fig.width=9, fig.height=5}
+trend <- df %>%
+  filter(employment_type == "Full-Time") %>%
+  mutate(region = ifelse(company_location == "US", "United States", "Offshore")) %>%
+  group_by(work_year, region) %>%
+  summarise(med_sal = median(salary_in_usd), .groups = "drop")
+
+ggplot(trend, aes(x = work_year, y = med_sal, color = region, group = region)) +
+  geom_line(linewidth = 1.8) +
+  geom_point(size = 4) +
+  geom_text(aes(label = dollar(med_sal, scale = 1e-3, suffix = "K")),
+            vjust = -.5, fontface = "bold", size = 3.5) +
+  scale_y_continuous(labels = dollar_format(scale = 1e-3, suffix = "K"), limits = c(0, NA)) +
+  scale_color_manual(values = c("United States" = "#065A82", "Offshore" = "#02C39A")) +
+  labs(title = "Data Scientist Salaries Are Rising — Fast",
+       subtitle = "Median full-time salary by year | U.S. vs. Offshore",
+       x = "Year", y = "Median Annual Salary (USD)", color = "") +
+  theme_minimal(base_size = 13) + theme(legend.position = "bottom")
+```
+
+### C.4 — Graph 2: Salary Range by Experience — US vs. Offshore
+
+```{r ceo_graph2, fig.width=9, fig.height=5}
+df %>%
+  filter(employment_type == "Full-Time") %>%
+  mutate(region = ifelse(company_location == "US", "United States", "Offshore")) %>%
+  ggplot(aes(x = experience_level, y = salary_in_usd, fill = region)) +
+  geom_boxplot(outlier.alpha = 0.3, position = position_dodge(0.8)) +
+  scale_y_continuous(labels = dollar_format(scale = 1e-3, suffix = "K")) +
+  scale_fill_manual(values = c("United States" = "#065A82", "Offshore" = "#02C39A")) +
+  labs(title = "The U.S. Premium Is Real — and Grows with Seniority",
+       subtitle = "Full-time positions | Boxes = 25th–75th percentile",
+       x = "Experience Level", y = "Annual Salary (USD)", fill = "") +
+  theme_minimal(base_size = 13) + theme(legend.position = "bottom")
+```
+
+---
+
+## Story Summary
+
+The data are unambiguous. Based on 607 real data science job records from 2020–2022, U.S.-based senior data scientists are expensive and getting more expensive every year, with median salaries rising from \$114,000 in 2020 to \$140,000 in 2022, a 23% jump in just two years. Offshore senior talent runs at roughly half that cost, with a median of \$88,000 and an interquartile range of \$62K–\$114K. The gap between the two markets is not shrinking — it is widening. For a small but fast-growing company seeking its first senior data scientist, someone who can both deliver results today and build a team tomorrow, our recommendation is to budget \$140,000-\$180,000 for a U.S.-based hire (top quartile positioning) or \$75,000-\$100,000 for an offshore equivalent. Hiring now is the right move: every quarter of delay means a higher asking price in a market where supply has not caught up to demand.
